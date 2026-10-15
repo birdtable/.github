@@ -6,3 +6,5 @@
 </p>
 
 Small tools for home and code.
+
+- **[oilbird](https://github.com/birdtable/oilbird)**: a private SonarQube on your Mac, with nothing to install first.
