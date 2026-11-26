@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "about": "The patterns of the public-text check (check.mjs, called by .github/workflows/public-text.yml). Each class is a regular expression in JavaScript's syntax, matched against every line with the flags given and g. A match is a hit unless one of the class's allow expressions, matched without case, finds the match's allowGroup (0, the default, is the whole match). Any other reader of this file follows the same rule. The agent class writes a letter of each name as a one-letter class, so this file holds no name as written.",
+  "classes": [
+    {
+      "name": "home",
+      "what": "a home folder path",
+      "pattern": "(?<![\\w.-])(?:/(?:Users|home)/|[A-Za-z]:[\\\\/]+Users[\\\\/]+)([^\\\\/\\s\"'`:]+)[\\\\/]",
+      "flags": "i",
+      "allowGroup": 1,
+      "allow": ["^(?:[a-z]|\\.|\\.\\.|<user>|someone)$"]
+    },
+    {
+      "name": "email",
+      "what": "an email address that is neither a no-reply one nor a reserved name",
+      "pattern": "[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}",
+      "flags": "",
+      "allow": [
+        "^[^@]+@users\\.noreply\\.github\\.com$",
+        "^noreply@github\\.com$",
+        "^noreply@anthropic\\.com$",
+        "@(?:[^@]+\\.)?example\\.(?:com|org|net)$",
+        "@(?:[^@]+\\.)?(?:example|invalid|test|localhost)$",
+        "^[^@]+@v\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
+      ]
+    },
+    {
+      "name": "decision",
+      "what": "a decision id",
+      "pattern": "\\b(?!BSD-)(?:[A-Z]{1,3}D|DL)-\\d+\\b",
+      "flags": ""
+    },
+    {
+      "name": "session",
+      "what": "a session link or id",
+      "pattern": "claude\\.ai/code/session_|\\bsession_[0-9A-Za-z]{16,}\\b",
+      "flags": ""
+    },
+    {
+      "name": "agent",
+      "what": "an agent name",
+      "pattern": "(?<![-\\w])(?:platform-h[u]b|review-f[a]ble|f[a]ble-[a-z]+|files-r[e]view-\\d+|(?:process|files|console)-(?:lead|review|lander|\\d+))\\b",
+      "flags": ""
+    }
+  ]
+}
