@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
@@ -302,6 +302,9 @@ test("run: gitleaks's findings in the diff, the title, the body and a message ar
   ]) {
     assert.match(out, w);
   }
+  // A relative path to gitleaks is read from the folder the check was started in.
+  const rel = check(r, { PR_TITLE: "FAKE-SECRET" }, ["--gitleaks", relative(process.cwd(), bin)]);
+  assert.equal(rel.code, 1, rel.out);
   assert.equal(check(r, { PR_TITLE: "FAIL" }, ["--gitleaks", bin]).code, 2);
   assert.equal(check(r, {}, ["--gitleaks", join(dirname(bin), "missing")]).code, 2);
 });

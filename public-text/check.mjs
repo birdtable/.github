@@ -19,7 +19,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // load reads patterns.json's text into its classes, and refuses a file it cannot read whole.
@@ -198,6 +198,9 @@ export function run(argv, env, out = console.log) {
     }
     args[argv[i].slice(2)] = argv[i + 1];
   }
+  // gitleaks runs in a folder of its own, so a path to it is made absolute here; a bare name is
+  // still looked up on PATH.
+  if (args.gitleaks && args.gitleaks.includes("/")) args.gitleaks = resolve(args.gitleaks);
   if (!args.patterns || !args.repo) {
     out(`::error title=public-text::usage: check.mjs --patterns <file> --repo <clone> [--gitleaks <binary>]`);
     return 2;
