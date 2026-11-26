@@ -1,0 +1,5 @@
+# The gitleaks config check.mjs passes with --config: gitleaks's own rules, unchanged. Passing it means
+# a GITLEAKS_CONFIG in the environment, or a .gitleaks.toml in the pull request, never decides what
+# gitleaks looks for.
+[extend]
+useDefault = true

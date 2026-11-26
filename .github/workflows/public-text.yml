@@ -1,0 +1,102 @@
+# public-text: a check that every public Birdtable library's CI calls on each pull request. It reads
+# the text the pull request would publish: the lines its diff adds and the paths it touches, its title
+# and body, and the message of every commit from the merge base to the head. It is red when any of
+# them holds a home folder path, an email address that is neither a no-reply one nor a reserved name,
+# a decision id, a session link, an agent name, or a secret that gitleaks finds. The patterns are
+# public-text/patterns.json in this repository, read at the commit the caller pins, so a caller
+# changes what it is checked for only by moving its pin.
+#
+# A caller calls it from a workflow file of its own, so that an edit to the title or body runs this
+# check again and nothing else:
+#
+#   name: public-text
+#   on:
+#     pull_request:
+#       types: [opened, edited, synchronize, reopened]
+#   permissions:
+#     contents: read
+#   jobs:
+#     public-text:
+#       uses: birdtable/.github/.github/workflows/public-text.yml@<full sha>
+#
+# Never under pull_request_target: the first step refuses any event but pull_request. The workflow
+# holds no secret, its token reads contents alone, and it runs nothing from the pull request: git
+# reads the clone, and check.mjs and gitleaks read text. The title and body reach the check through
+# the environment, never through an expression in a script. A hit names its place (a file and line,
+# the title, a line of the body, or a commit) and its class, never the text it matched, so the log
+# doesn't publish that text a second time.
+name: public-text
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  public-text:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: refuse any event but pull_request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" != pull_request ]; then
+            echo "::error title=public-text::public-text runs on pull_request only, and this run is $EVENT_NAME"
+            exit 1
+          fi
+      # The check's own files are read from this repository at the commit the caller pinned, which
+      # job.workflow_repository and job.workflow_sha name in a called workflow. This step refuses a
+      # run where they name anything else, so the check never reads a copy of itself from the caller.
+      - name: name the check's own commit
+        env:
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if [ "$WORKFLOW_REPOSITORY" != birdtable/.github ] || ! [[ "$WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=public-text::the check cannot name its own commit: job.workflow_repository is '$WORKFLOW_REPOSITORY' and job.workflow_sha is '$WORKFLOW_SHA'"
+            exit 1
+          fi
+      - name: check out the check at the caller's pin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: check
+          sparse-checkout: public-text
+          persist-credentials: false
+      # The whole history, so the merge base of the pull request's base and head is in the clone.
+      - name: check out the pull request's head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+      # gitleaks as its release binary, refused unless its checksum is the one pinned here. To move
+      # it, take the new release's linux_x64 line from its gitleaks_<version>_checksums.txt.
+      - name: fetch gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          mkdir "$RUNNER_TEMP/gitleaks"
+          cd "$RUNNER_TEMP/gitleaks"
+          curl -fsSL --retry 3 -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks version
+      - name: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node check/public-text/check.mjs --patterns check/public-text/patterns.json --repo pr --gitleaks "$RUNNER_TEMP/gitleaks/gitleaks"
