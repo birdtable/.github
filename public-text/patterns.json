@@ -5,7 +5,7 @@
     {
       "name": "home",
       "what": "a home folder path",
-      "pattern": "(?<![\\w.-])(?:/Users/|/home/|[A-Za-z]:[\\\\/]+Users[\\\\/]+)([^\\\\/\\s\"'`:]+)[\\\\/]",
+      "pattern": "(?<![\\w.-])(?:/(?:Users|home)/|[A-Za-z]:[\\\\/]+Users[\\\\/]+)([^\\\\/\\s\"'`:]+)[\\\\/]",
       "flags": "i",
       "allowGroup": 1,
       "allow": ["^(?:[a-z]|\\.|\\.\\.|<user>|someone)$"]

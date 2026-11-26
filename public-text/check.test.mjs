@@ -58,8 +58,8 @@ const cases = {
     ],
   },
   decision: {
-    hit: [j("P", "D-1"), j("as G", "D-43 says"), j("X", "D-9"), j("D", "L-886"), j("AB", "CD-12")],
-    miss: [j("BS", "D-3"), j("BS", "D-2-Clause"), j("P", "D-"), j("p", "d-1"), j("ABC", "DD-1")],
+    hit: [j("P", "D-1"), j("as G", "D-43 says"), j("X", "D-9"), j("D", "L-886"), j("AB", "C", "D-12")],
+    miss: [j("BS", "D-3"), j("BS", "D-2-Clause"), j("P", "D-"), j("p", "d-1"), j("ABC", "D", "D-1")],
   },
   session: {
     hit: [j("https://claude.ai/code/", "session_", "01R3"), j("session_", "014a3uhWBYey8jPfkQ93")],
