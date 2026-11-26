@@ -1,0 +1,11 @@
+# A fixture for public-text, birdtable/.github#1. It calls the workflow from this branch, and its pull
+# request is closed unmerged once its run is read.
+name: fixture
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+permissions:
+  contents: read
+jobs:
+  public-text:
+    uses: ./.github/workflows/public-text.yml

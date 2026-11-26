@@ -1,0 +1,1 @@
+fixture_secret = "HDsZT6xilEh2jHUXok1QYq3-BhqYWUMf5_XqPYEh"
