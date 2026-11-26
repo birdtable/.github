@@ -21,7 +21,7 @@
         "^noreply@anthropic\\.com$",
         "@(?:[^@]+\\.)?example\\.(?:com|org|net)$",
         "@(?:[^@]+\\.)?(?:example|invalid|test|localhost)$",
-        "@v[0-9]"
+        "^[^@]+@v\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"
       ]
     },
     {

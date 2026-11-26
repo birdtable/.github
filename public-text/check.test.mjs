@@ -42,7 +42,7 @@ const cases = {
     ],
   },
   email: {
-    hit: [j("someone", "@", "birdtable.fixture"), j("a.b+c", "@", "mail.fixture.org")],
+    hit: [j("someone", "@", "birdtable.fixture"), j("a.b+c", "@", "mail.fixture.org"), j("x", "@", "v2mail.org"), j("x", "@", "v1.2.3mail.org")],
     miss: [
       j("12345+someone", "@", "users.noreply.github.com"),
       j("noreply", "@", "github.com"),
@@ -193,11 +193,14 @@ test("scanDiff: added lines at their new lines, paths, renames, and no header re
 });
 
 // repo makes a clone with a base commit and a head commit on top of it, and returns their shas.
-function repo(files, message) {
+// repo makes a repository with a base commit and one more, which adds files (text or a Buffer) with
+// message, made by t <t@example.com> unless who names another author or committer.
+function repo(files, message, who = {}) {
   const dir = mkdtempSync(join(tmpdir(), "public-text-test-"));
   const git = (...a) =>
     execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...a], {
       encoding: "utf8",
+      env: { ...process.env, ...(a[0] === "commit" && a.includes("--allow-empty") ? who : {}) },
     });
   git("init", "-q");
   writeFileSync(join(dir, "README"), "base\n");
@@ -223,7 +226,7 @@ test("run: a clean pull request is 0", () => {
   const r = repo({ "a.txt": "nothing here\n" }, "add a.txt");
   const { code, out } = check(r, { PR_TITLE: "Add a.txt", PR_BODY: "Adds it.", GITHUB_EVENT_NAME: "pull_request" });
   assert.equal(code, 0, out);
-  assert.match(out, /public-text: no hits over 1 files, the title, the body and 1 commit messages, without gitleaks/);
+  assert.match(out, /public-text: no hits over 1 files, the title, the body and 1 commits' messages and identities, without gitleaks/);
 });
 
 test("run: hits in a file, the title, the body and a message are 1, each named by place and class, never by text", () => {
@@ -245,6 +248,58 @@ test("run: hits in a file, the title, the body and a message are 1, each named b
   ];
   for (const w of want) assert.match(out, w);
   for (const t of [home, mail, dec, sess, agent]) assert.ok(!out.includes(t), `the log holds ${t}`);
+});
+
+test("run: a file git calls binary is checked, its content and its path", () => {
+  const home = j("/ho", "me/fixture/");
+  const dec = j("X", "D-9");
+  const agent = j("console", "-99");
+  const r = repo(
+    {
+      "blob.bin": Buffer.concat([Buffer.from([0, 1, 2]), Buffer.from(`\n${home}\n${dec}\n`)]),
+      [j("bin/", agent, ".bin")]: Buffer.from([0, 1, 2, 10]),
+    },
+    "m",
+  );
+  const { code, out } = check(r, {});
+  assert.equal(code, 1, out);
+  for (const w of [
+    /::error file=blob\.bin,line=2,title=public-text home::blob\.bin, line 2: a home folder path/,
+    /::error file=blob\.bin,line=3,title=public-text decision::blob\.bin, line 3: a decision id/,
+    /::error title=public-text agent::the path of file \d of the diff: an agent name/,
+    /public-text: 3 hits \(agent 1, home 1, decision 1\) over 2 files/,
+  ]) {
+    assert.match(out, w);
+  }
+  for (const t of [home, dec, agent]) assert.ok(!out.includes(t), `the log holds ${t}`);
+});
+
+test("run: a record separator in a message hides nothing after it", () => {
+  const dec = j("X", "D-8");
+  const r = repo({ "a.txt": "x\n" }, `fix\n\nclean line\x1e${dec} after a record separator\nlast`);
+  const { code, out } = check(r, {});
+  assert.equal(code, 1, out);
+  assert.match(out, new RegExp(`::error title=public-text decision::commit ${r.head}, message line 3: a decision id`));
+  assert.ok(!out.includes(dec));
+});
+
+test("run: each commit's author and committer are checked, and named by place, never by text", () => {
+  const mail = j("someone", "@", "birdtable.fixture");
+  const agent = j("console", "-99");
+  const r = repo({ "a.txt": "x\n" }, "m", {
+    GIT_AUTHOR_NAME: "A",
+    GIT_AUTHOR_EMAIL: mail,
+    GIT_COMMITTER_NAME: agent,
+    GIT_COMMITTER_EMAIL: "1+a@users.noreply.github.com",
+  });
+  const { code, out } = check(r, {});
+  assert.equal(code, 1, out);
+  assert.match(out, new RegExp(`::error title=public-text email::commit ${r.head}, author: an email address`));
+  assert.match(out, new RegExp(`::error title=public-text agent::commit ${r.head}, committer: an agent name`));
+  assert.match(out, /public-text: 2 hits \(email 1, agent 1\) over 1 files, the title, the body and 1 commits' messages and identities/);
+  for (const t of [mail, agent]) assert.ok(!out.includes(t), `the log holds ${t}`);
+  // A no-reply author and committer are clean.
+  assert.equal(check(repo({ "a.txt": "x\n" }, "m", { GIT_AUTHOR_EMAIL: "noreply@github.com" }), {}).code, 0);
 });
 
 test("run: in Actions the pull request comes from the event's file, never from the environment", () => {
@@ -324,11 +379,18 @@ test("run: gitleaks's findings in the diff, the title, the body and a message ar
     /::error title=public-text secret::the pull request's title: a secret/,
     /::error title=public-text secret::the pull request's body, line 2: a secret/,
     new RegExp(`::error title=public-text secret::commit ${r.head}, message line 3: a secret`),
-    /public-text: 4 hits \(secret 4\) over 2 files, the title, the body and 1 commit messages, with gitleaks/,
+    /public-text: 4 hits \(secret 4\) over 2 files, the title, the body and 1 commits' messages and identities, with gitleaks/,
   ]) {
     assert.match(out, w);
   }
   // A relative path to gitleaks is read from the folder the check was started in.
+  // A file whose path gitleaks hits is named by its number, in every line about it.
+  const p = repo({ "FAKE-SECRET/a.txt": "FAKE-SECRET\n" }, "m");
+  const named = check(p, {}, ["--gitleaks", bin]);
+  assert.equal(named.code, 1, named.out);
+  assert.match(named.out, /::error title=public-text secret::the path of file 1 of the diff: a secret/);
+  assert.match(named.out, /::error title=public-text secret::file 1 of the diff, line 1: a secret/);
+  assert.ok(!named.out.includes("FAKE-SECRET/a.txt"));
   const rel = check(r, { PR_TITLE: "FAKE-SECRET" }, ["--gitleaks", relative(process.cwd(), bin)]);
   assert.equal(rel.code, 1, rel.out);
   assert.equal(check(r, { PR_TITLE: "FAIL" }, ["--gitleaks", bin]).code, 2);

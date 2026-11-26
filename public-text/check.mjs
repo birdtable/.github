@@ -3,7 +3,7 @@
 //
 //   - the lines its diff adds, and the paths of the files it adds, changes or renames;
 //   - its title and its body;
-//   - the message of every commit from the merge base to the head;
+//   - the message, author and committer of every commit from the merge base to the head;
 //
 // and matches each line against the classes of patterns.json, and, when given gitleaks, has gitleaks
 // look for secrets in the same text. A hit is printed as its place (a file and line, the title, a line
@@ -254,43 +254,51 @@ export function run(argv, env, out = console.log) {
     const base = git("merge-base", pr.base, pr.head).trim();
     const range = `${base}..${pr.head}`;
 
-    const diff = scanDiff(classes, git("diff", "--no-color", "--no-ext-diff", "--unified=0", "-M", base, pr.head));
+    // --text: a file git calls binary is read line by line like any other, so its content and its
+    // path are checked. Without it, git prints one line saying the files differ, and nothing to scan.
+    const diff = scanDiff(classes, git("diff", "--text", "--no-color", "--no-ext-diff", "--unified=0", "-M", base, pr.head));
     files = diff.files;
-    // A file whose path is hit is named by its number in the diff, never by its path.
-    const named = new Set(diff.hits.filter((h) => h.line === 0).map((h) => h.file));
-    const fileName = (i) => (named.has(i) ? `file ${i + 1} of the diff` : files[i]);
-    for (const h of diff.hits) {
-      if (h.line === 0) hits.push({ place: `the path of file ${h.file + 1} of the diff`, cls: h.cls.name, what: h.cls.what });
-      else if (named.has(h.file)) hits.push({ place: `${fileName(h.file)}, line ${h.line}`, cls: h.cls.name, what: h.cls.what });
-      else hits.push({ place: `${files[h.file]}, line ${h.line}`, file: files[h.file], line: h.line, cls: h.cls.name, what: h.cls.what });
-    }
-
-    for (const h of scan(classes, pr.title)) hits.push({ place: "the pull request's title", cls: h.cls.name, what: h.cls.what });
-    for (const h of scan(classes, pr.body)) hits.push({ place: `the pull request's body, line ${h.line}`, cls: h.cls.name, what: h.cls.what });
-
-    commits = git("log", "--format=%H%x00%B%x1e", range)
-      .split("\x1e")
-      .map((r) => r.replace(/^\n/, ""))
-      .filter((r) => r.includes("\x00"))
-      .map((r) => {
-        const [sha, msg] = r.split("\x00");
-        return { sha, msg };
-      });
-    for (const c of commits) {
-      for (const h of scan(classes, c.msg)) hits.push({ place: `commit ${c.sha}, message line ${h.line}`, cls: h.cls.name, what: h.cls.what });
-    }
-
+    const secret = (f) => `a secret (gitleaks rule ${f.RuleID})`;
+    // The diff's hits are gathered first, gitleaks's with the rest, so that a file whose path either
+    // one hits is named by its number in the diff in every line about it, never by its path.
+    const fileHits = diff.hits.map((h) => ({ file: h.file, line: h.line, cls: h.cls.name, what: h.cls.what }));
     if (args.gitleaks) {
-      const secret = (f) => `a secret (gitleaks rule ${f.RuleID})`;
       // The diff's paths and added lines go to gitleaks one to a line, so a finding's line is the
       // index of what it found in.
       for (const f of gitleaks(args.gitleaks, diff.added.map((a) => a.text).join("\n"))) {
         const a = diff.added[f.StartLine - 1];
         if (!a) throw new Error("gitleaks reported a line past the end of the diff");
-        if (a.line === 0) hits.push({ place: `the path of file ${a.file + 1} of the diff`, cls: "secret", what: secret(f) });
-        else if (named.has(a.file)) hits.push({ place: `${fileName(a.file)}, line ${a.line}`, cls: "secret", what: secret(f) });
-        else hits.push({ place: `${files[a.file]}, line ${a.line}`, file: files[a.file], line: a.line, cls: "secret", what: secret(f) });
+        fileHits.push({ file: a.file, line: a.line, cls: "secret", what: secret(f) });
       }
+    }
+    const named = new Set(fileHits.filter((h) => h.line === 0).map((h) => h.file));
+    for (const h of fileHits) {
+      if (h.line === 0) hits.push({ place: `the path of file ${h.file + 1} of the diff`, cls: h.cls, what: h.what });
+      else if (named.has(h.file)) hits.push({ place: `file ${h.file + 1} of the diff, line ${h.line}`, cls: h.cls, what: h.what });
+      else hits.push({ place: `${files[h.file]}, line ${h.line}`, file: files[h.file], line: h.line, cls: h.cls, what: h.what });
+    }
+
+    for (const h of scan(classes, pr.title)) hits.push({ place: "the pull request's title", cls: h.cls.name, what: h.cls.what });
+    for (const h of scan(classes, pr.body)) hits.push({ place: `the pull request's body, line ${h.line}`, cls: h.cls.name, what: h.cls.what });
+
+    // -z ends each commit's record with a NUL, a byte git never lets a message, a name or an email
+    // hold. A record is the sha, the author, the committer, then the message.
+    commits = git("log", "-z", "--format=%H%n%an <%ae>%n%cn <%ce>%n%B", range)
+      .split("\0")
+      .filter((r) => r !== "")
+      .map((r) => {
+        const [sha, author, committer, ...msg] = r.split("\n");
+        if (!/^[0-9a-f]{40}$/.test(sha) || committer === undefined) throw new Error("git log wrote a record the check cannot read");
+        return { sha, author, committer, msg: msg.join("\n") };
+      });
+    for (const c of commits) {
+      for (const who of ["author", "committer"]) {
+        for (const h of scan(classes, c[who])) hits.push({ place: `commit ${c.sha}, ${who}`, cls: h.cls.name, what: h.cls.what });
+      }
+      for (const h of scan(classes, c.msg)) hits.push({ place: `commit ${c.sha}, message line ${h.line}`, cls: h.cls.name, what: h.cls.what });
+    }
+
+    if (args.gitleaks) {
       for (const f of gitleaks(args.gitleaks, pr.title)) hits.push({ place: "the pull request's title", cls: "secret", what: secret(f) });
       for (const f of gitleaks(args.gitleaks, pr.body)) {
         hits.push({ place: `the pull request's body, line ${f.StartLine}`, cls: "secret", what: secret(f) });
@@ -310,7 +318,7 @@ export function run(argv, env, out = console.log) {
     const at = h.file ? ` file=${escape(h.file, true)},line=${h.line},` : " ";
     out(`::error${at}title=public-text ${h.cls}::${escape(h.place)}: ${escape(h.what)}`);
   }
-  const scope = `${files.length} files, the title, the body and ${commits.length} commit messages${args.gitleaks ? ", with gitleaks" : ", without gitleaks"}`;
+  const scope = `${files.length} files, the title, the body and ${commits.length} commits' messages and identities${args.gitleaks ? ", with gitleaks" : ", without gitleaks"}`;
   const counts = {};
   for (const h of hits) counts[h.cls] = (counts[h.cls] ?? 0) + 1;
   const tally = Object.entries(counts)
