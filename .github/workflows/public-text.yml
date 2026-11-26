@@ -22,9 +22,10 @@
 # Never under pull_request_target: the first step refuses any event but pull_request. The workflow
 # holds no secret, its token reads contents alone, and it runs nothing from the pull request: git
 # reads the clone, and check.mjs and gitleaks read text. The title and body reach the check through
-# the environment, never through an expression in a script. A hit names its place (a file and line,
-# the title, a line of the body, or a commit) and its class, never the text it matched, so the log
-# doesn't publish that text a second time.
+# the event's file, never through an expression in a script and never through env, which the runner
+# prints. A hit names its place (a file and line, the title, a line of the body, or a commit) and its
+# class, never the text it matched, so the log doesn't publish that text a second time. The public
+# repository is cloned without a credential, so a private caller's run goes red.
 name: public-text
 
 on:
@@ -71,14 +72,20 @@ jobs:
           path: check
           sparse-checkout: public-text
           persist-credentials: false
-      # The whole history, so the merge base of the pull request's base and head is in the clone.
-      - name: check out the pull request's head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          path: pr
-          fetch-depth: 0
-          persist-credentials: false
+      # The whole history, so the merge base of the pull request's base and head is in the clone. It
+      # is cloned by git itself and not by actions/checkout, which prints the head commit's subject in
+      # the log, and nothing is checked out: the check reads git's objects alone. The clone takes no
+      # credential, which a public repository doesn't need.
+      - name: clone the pull request
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          git clone --quiet --no-checkout --no-tags "$SERVER_URL/$REPOSITORY.git" pr
+          git -C pr fetch --quiet --no-tags origin "$BASE_SHA" "$HEAD_SHA"
       # gitleaks as its release binary, refused unless its checksum is the one pinned here. To move
       # it, take the new release's linux_x64 line from its gitleaks_<version>_checksums.txt.
       - name: fetch gitleaks
@@ -93,10 +100,7 @@ jobs:
           echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
           tar -xzf gitleaks.tar.gz gitleaks
           ./gitleaks version
+      # check.mjs reads the title, body and shas from the event's file, GITHUB_EVENT_PATH. They are not
+      # passed in env, because the runner prints a step's env in the log.
       - name: check
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
         run: node check/public-text/check.mjs --patterns check/public-text/patterns.json --repo pr --gitleaks "$RUNNER_TEMP/gitleaks/gitleaks"
