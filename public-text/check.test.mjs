@@ -247,6 +247,32 @@ test("run: hits in a file, the title, the body and a message are 1, each named b
   for (const t of [home, mail, dec, sess, agent]) assert.ok(!out.includes(t), `the log holds ${t}`);
 });
 
+test("run: in Actions the pull request comes from the event's file, never from the environment", () => {
+  const r = repo({ "a.txt": "x\n" }, "m");
+  const dir = mkdtempSync(join(tmpdir(), "public-text-test-"));
+  const event = (pull_request) => {
+    const f = join(dir, `e${Math.random()}.json`);
+    writeFileSync(f, JSON.stringify({ pull_request }));
+    return { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request", GITHUB_EVENT_PATH: f };
+  };
+  const agent = j("console", "-99");
+  const pr = { base: { sha: r.base }, head: { sha: r.head }, title: "t", body: null };
+  // The event's title is read, and the environment's clean one is not.
+  const hit = check(r, { ...event({ ...pr, title: `as ${agent}` }), PR_TITLE: "clean", PR_BODY: "clean" });
+  assert.equal(hit.code, 1, hit.out);
+  assert.match(hit.out, /::error title=public-text agent::the pull request's title: an agent name/);
+  assert.ok(!hit.out.includes(agent));
+  // A null body is an empty one.
+  assert.equal(check(r, event(pr)).code, 0);
+  // The event's shas are read, and the environment's are not.
+  assert.equal(check(r, event({ ...pr, head: { sha: "HEAD" } })).code, 2);
+  assert.equal(check(r, event({ ...pr, base: undefined })).code, 2);
+  assert.equal(check(r, event({ ...pr, title: 7 })).code, 2);
+  assert.equal(check(r, event(null)).code, 2);
+  assert.equal(check(r, { GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "pull_request" }).code, 2);
+  assert.equal(check(r, { ...event(pr), GITHUB_EVENT_PATH: join(dir, "none.json") }).code, 2);
+});
+
 test("run: anything but a pull_request event, a bad sha, a bad patterns file or bad arguments are 2", () => {
   const r = repo({ "a.txt": "x\n" }, "m");
   assert.equal(check(r, { GITHUB_EVENT_NAME: "pull_request_target" }).code, 2);
