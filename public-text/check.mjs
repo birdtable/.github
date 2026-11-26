@@ -13,9 +13,10 @@
 //
 //   node check.mjs --patterns <patterns.json> --repo <clone> [--gitleaks <gitleaks binary>]
 //
-// It reads the pull request from the environment: BASE_SHA and HEAD_SHA (full shas), PR_TITLE and
-// PR_BODY, and GITHUB_EVENT_NAME, which, when set, must be pull_request. It runs no code from the
-// pull request: git reads the clone, and nothing in it is executed.
+// In Actions it reads the pull request from the event's file, GITHUB_EVENT_PATH; anywhere else, from
+// BASE_SHA and HEAD_SHA (full shas), PR_TITLE and PR_BODY. GITHUB_EVENT_NAME, when set, must be
+// pull_request. It runs no code from the pull request: git reads the clone, and nothing in it is
+// executed.
 import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -188,6 +189,26 @@ function gitleaks(bin, input) {
   return findings;
 }
 
+// pullRequest reads the pull request's base and head shas, title and body. In Actions it reads them
+// from the event's own file, GITHUB_EVENT_PATH, and never from the environment: the runner prints a
+// step's env block in the log, which would publish the title and body there a second time. Anywhere
+// else, it reads BASE_SHA, HEAD_SHA, PR_TITLE and PR_BODY.
+export function pullRequest(env) {
+  if (env.GITHUB_ACTIONS === "true" && !env.GITHUB_EVENT_PATH) throw new Error("GITHUB_EVENT_PATH is not set");
+  if (!env.GITHUB_EVENT_PATH) {
+    return { base: env.BASE_SHA ?? "", head: env.HEAD_SHA ?? "", title: env.PR_TITLE ?? "", body: env.PR_BODY ?? "" };
+  }
+  const p = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8")).pull_request;
+  if (p === null || typeof p !== "object") throw new Error("the event holds no pull request");
+  const text = (v, what) => {
+    if (v === null || v === undefined) return "";
+    if (typeof v !== "string") throw new Error(`the pull request's ${what} is not text`);
+    return v;
+  };
+  const sha = (v) => (typeof v === "string" ? v : "");
+  return { base: sha(p.base?.sha), head: sha(p.head?.sha), title: text(p.title, "title"), body: text(p.body, "body") };
+}
+
 // run is the check: it prints each hit and a summary, and returns the exit status.
 export function run(argv, env, out = console.log) {
   const args = {};
@@ -209,9 +230,16 @@ export function run(argv, env, out = console.log) {
     out(`::error title=public-text::public-text runs on pull_request only, and this run is ${escape(env.GITHUB_EVENT_NAME)}`);
     return 2;
   }
-  for (const k of ["BASE_SHA", "HEAD_SHA"]) {
-    if (!/^[0-9a-f]{40}$/.test(env[k] ?? "")) {
-      out(`::error title=public-text::${k} is not a full commit sha`);
+  let pr;
+  try {
+    pr = pullRequest(env);
+  } catch (e) {
+    out(`::error title=public-text::the check could not run, so nothing was checked: ${escape(e.message.split("\n")[0])}`);
+    return 2;
+  }
+  for (const k of ["base", "head"]) {
+    if (!/^[0-9a-f]{40}$/.test(pr[k])) {
+      out(`::error title=public-text::the pull request's ${k} is not a full commit sha`);
       return 2;
     }
   }
@@ -223,10 +251,10 @@ export function run(argv, env, out = console.log) {
     const classes = load(readFileSync(args.patterns, "utf8"));
     const git = (...a) =>
       execFileSync("git", ["-C", args.repo, "-c", "core.quotePath=false", ...a], { encoding: "utf8", maxBuffer: 1 << 30 });
-    const base = git("merge-base", env.BASE_SHA, env.HEAD_SHA).trim();
-    const range = `${base}..${env.HEAD_SHA}`;
+    const base = git("merge-base", pr.base, pr.head).trim();
+    const range = `${base}..${pr.head}`;
 
-    const diff = scanDiff(classes, git("diff", "--no-color", "--no-ext-diff", "--unified=0", "-M", base, env.HEAD_SHA));
+    const diff = scanDiff(classes, git("diff", "--no-color", "--no-ext-diff", "--unified=0", "-M", base, pr.head));
     files = diff.files;
     // A file whose path is hit is named by its number in the diff, never by its path.
     const named = new Set(diff.hits.filter((h) => h.line === 0).map((h) => h.file));
@@ -237,8 +265,8 @@ export function run(argv, env, out = console.log) {
       else hits.push({ place: `${files[h.file]}, line ${h.line}`, file: files[h.file], line: h.line, cls: h.cls.name, what: h.cls.what });
     }
 
-    for (const h of scan(classes, env.PR_TITLE)) hits.push({ place: "the pull request's title", cls: h.cls.name, what: h.cls.what });
-    for (const h of scan(classes, env.PR_BODY)) hits.push({ place: `the pull request's body, line ${h.line}`, cls: h.cls.name, what: h.cls.what });
+    for (const h of scan(classes, pr.title)) hits.push({ place: "the pull request's title", cls: h.cls.name, what: h.cls.what });
+    for (const h of scan(classes, pr.body)) hits.push({ place: `the pull request's body, line ${h.line}`, cls: h.cls.name, what: h.cls.what });
 
     commits = git("log", "--format=%H%x00%B%x1e", range)
       .split("\x1e")
@@ -263,8 +291,8 @@ export function run(argv, env, out = console.log) {
         else if (named.has(a.file)) hits.push({ place: `${fileName(a.file)}, line ${a.line}`, cls: "secret", what: secret(f) });
         else hits.push({ place: `${files[a.file]}, line ${a.line}`, file: files[a.file], line: a.line, cls: "secret", what: secret(f) });
       }
-      for (const f of gitleaks(args.gitleaks, env.PR_TITLE)) hits.push({ place: "the pull request's title", cls: "secret", what: secret(f) });
-      for (const f of gitleaks(args.gitleaks, env.PR_BODY)) {
+      for (const f of gitleaks(args.gitleaks, pr.title)) hits.push({ place: "the pull request's title", cls: "secret", what: secret(f) });
+      for (const f of gitleaks(args.gitleaks, pr.body)) {
         hits.push({ place: `the pull request's body, line ${f.StartLine}`, cls: "secret", what: secret(f) });
       }
       for (const c of commits) {
