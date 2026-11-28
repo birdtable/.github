@@ -41,6 +41,12 @@
       "what": "an agent name",
       "pattern": "(?<![-\\w])(?:platform-h[u]b|review-f[a]ble|f[a]ble-[a-z]+|files-r[e]view-\\d+|(?:process|files|console)-(?:lead|review|lander|\\d+))\\b",
       "flags": ""
+    },
+    {
+      "name": "private",
+      "what": "a private tracker's issue or a private repository's url",
+      "pattern": "(?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]+-private(?:#\\d+|/(?:issues|pull)/\\d+)|github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+-private\\b",
+      "flags": "i"
     }
   ]
 }
