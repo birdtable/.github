@@ -89,6 +89,25 @@ const cases = {
       j("processes", "-1"),
     ],
   },
+  private: {
+    hit: [
+      j("Review at abc (go-proc", "-private#480, CHANGES)"),
+      j("see https://github.com/birdtable/hatch", "-private/issues/139"),
+      j("go-files", "-private/pull/7"),
+      j("github.com/birdtable/go-files", "-private"),
+      j("GO-PROC", "-PRIVATE#1"),
+    ],
+    miss: [
+      "fixes #480",
+      "a private field",
+      "go-proc#49",
+      "privately#3",
+      j("-private", "#3"),
+      j("go-proc", "-private"),
+      j("go-proc", "-private/blob/main"),
+      j("github.com/birdtable/private", "-notes"),
+    ],
+  },
 };
 
 for (const [name, { hit, miss }] of Object.entries(cases)) {
@@ -248,6 +267,26 @@ test("run: hits in a file, the title, the body and a message are 1, each named b
   ];
   for (const w of want) assert.match(out, w);
   for (const t of [home, mail, dec, sess, agent]) assert.ok(!out.includes(t), `the log holds ${t}`);
+});
+
+test("run: a private tracker in a diff line, the body and a message is 1, and the word private is 0", () => {
+  const issue = j("go-proc", "-private#480");
+  const url = j("https://github.com/birdtable/go-proc", "-private/issues/480");
+  const r = repo({ "a.txt": `one\nsee ${url}\n` }, `fix\n\nas ${issue} says`);
+  const { code, out } = check(r, { PR_TITLE: "Fix it", PR_BODY: `line one\n${issue}` });
+  assert.equal(code, 1, out);
+  for (const w of [
+    /::error file=a\.txt,line=2,title=public-text private::a\.txt, line 2: a private tracker's issue or a private repository's url/,
+    /::error title=public-text private::the pull request's body, line 2: a private tracker's issue/,
+    new RegExp(`::error title=public-text private::commit ${r.head}, message line 3: a private tracker's issue`),
+    /public-text: 3 hits \(private 3\) over 1 files/,
+  ]) {
+    assert.match(out, w);
+  }
+  for (const t of [issue, url]) assert.ok(!out.includes(t), `the log holds ${t}`);
+  const prose = "a private field, privately#3, and go-proc#49";
+  const clean = check(repo({ "a.txt": `${prose}\n` }, `fix\n\n${prose}`), { PR_TITLE: "Private fields", PR_BODY: prose });
+  assert.equal(clean.code, 0, clean.out);
 });
 
 test("run: a file git calls binary is checked, its content and its path", () => {

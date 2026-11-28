@@ -2,9 +2,10 @@
 # the text the pull request would publish: the lines its diff adds and the paths it touches, its title
 # and body, and the message of every commit from the merge base to the head. It is red when any of
 # them holds a home folder path, an email address that is neither a no-reply one nor a reserved name,
-# a decision id, a session link, an agent name, or a secret that gitleaks finds. The patterns are
-# public-text/patterns.json in this repository, read at the commit the caller pins, so a caller
-# changes what it is checked for only by moving its pin.
+# a decision id, a session link, an agent name, a private tracker's issue or a private repository's
+# url, or a secret that gitleaks finds. The patterns are public-text/patterns.json in this
+# repository, read at the commit the caller pins, so a caller changes what it is checked for only by
+# moving its pin.
 #
 # A caller calls it from a workflow file of its own, so that an edit to the title or body runs this
 # check again and nothing else:
